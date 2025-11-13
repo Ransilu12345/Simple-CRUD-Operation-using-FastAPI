@@ -1,9 +1,13 @@
 """Database connection setup for MongoDB using PyMongo."""
 
 from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Connect to MongoDB running in Docker
-client = MongoClient("mongodb://localhost:27017/")
+client = MongoClient(os.getenv("MONGODB_URI"))
 
 # Select the `memory` database.
 db = client.memory
