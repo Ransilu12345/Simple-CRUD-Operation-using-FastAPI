@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 
-class BAeModels(BaseModel):
+class Model(BaseModel):
     """Pydantic model describing a chat/memory item stored in MongoDB.
 
     Fields:
@@ -11,8 +11,8 @@ class BAeModels(BaseModel):
         message: The main message/body content.
         summary: Optional short summary of the message.
     """
-    id: str
-    name: str
-    email: str
-    message: str
-    summary: Optional[str]
+    id: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    message: Optional[str] = None
+    summary: Optional[str] = None

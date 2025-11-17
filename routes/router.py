@@ -1,74 +1,63 @@
-"""FastAPI routes implementing CRUD operations for chat history items."""
-from fastapi import APIRouter, HTTPException, status
-from models.model import BAeModels
+from fastapi import APIRouter, HTTPException, status, Depends, Header
+from pymongo.errors import ServerSelectionTimeoutError, PyMongoError
+from models.model import Model
 from config.database import collection_name
 from schema.schemas import item_list, get_item
-from pymongo.errors import ServerSelectionTimeoutError, PyMongoError
+from typing import Optional
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 router = APIRouter()
 
-@router.get("/", status_code=status.HTTP_200_OK)
+API_KEY = os.getenv("API_KEY")
+
+def authorize(authorization: str = Header(None, alias="Authorization")):
+    """Custom Header Authorization"""
+    print(f"Received Authorization Header: {authorization}")  # Debug print
+    if authorization != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized Access"
+        )
+
+
+# CRUD routes with authorize dependency
+@router.get("/", dependencies=[Depends(authorize)])
 async def list_items():
-    """Return all items in the collection."""
     try:
-        items = item_list(collection_name.find())
-        return items
+        return item_list(collection_name.find())
     except ServerSelectionTimeoutError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
+        raise HTTPException(503, "Database unavailable")
     except PyMongoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(500, str(exc))
 
-@router.get("/{item_id}", status_code=status.HTTP_200_OK)
+@router.get("/{item_id}", dependencies=[Depends(authorize)])
 async def get_single_item(item_id: str):
-    """Return a single item by its application-level id."""
-    try:
-        item = collection_name.find_one({"id": item_id})
-        if not item:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        return get_item(item)
-    except ServerSelectionTimeoutError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
-    except PyMongoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+    item = collection_name.find_one({"id": item_id})
+    if not item:
+        raise HTTPException(404, "Item not found")
+    return get_item(item)
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_item(item: BAeModels):
-    """Create a new item. Conflicts if an item with the same id already exists."""
-    try:
-        existing = collection_name.find_one({"id": item.id})
-        if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Item with this id already exists")
-        collection_name.insert_one(dict(item))
-        created = collection_name.find_one({"id": item.id})
-        return get_item(created) if created else dict(item)
-    except ServerSelectionTimeoutError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
-    except PyMongoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+@router.post("/", dependencies=[Depends(authorize)])
+async def create_item(item: Model):
+    if item.id and collection_name.find_one({"id": item.id}):
+        raise HTTPException(409, "Item with this id already exists")
+    collection_name.insert_one(item.dict())
+    created = collection_name.find_one({"id": item.id})
+    return get_item(created) if created else item.dict()
 
-@router.put("/{item_id}", status_code=status.HTTP_200_OK)
-async def update_item(item_id: str, updated: BAeModels):
-    """Replace an item by id with the provided payload."""
-    try:
-        result = collection_name.update_one({"id": item_id}, {"$set": dict(updated)})
-        if result.matched_count == 0:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        item = collection_name.find_one({"id": item_id})
-        return get_item(item) if item else dict(updated)
-    except ServerSelectionTimeoutError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
-    except PyMongoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+@router.put("/{item_id}", dependencies=[Depends(authorize)])
+async def update_item(item_id: str, updated: Model):
+    result = collection_name.update_one({"id": item_id}, {"$set": updated.dict()})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Item not found")
+    item = collection_name.find_one({"id": item_id})
+    return get_item(item) if item else updated.dict()
 
-@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{item_id}", status_code=204, dependencies=[Depends(authorize)])
 async def delete_item(item_id: str):
-    """Delete an item by its id. Returns 204 on success."""
-    try:
-        result = collection_name.delete_one({"id": item_id})
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        return None
-    except ServerSelectionTimeoutError:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
-    except PyMongoError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+    result = collection_name.delete_one({"id": item_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Item not found")
